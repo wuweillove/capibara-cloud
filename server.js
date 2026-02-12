@@ -62,54 +62,50 @@ function startAgent(socket, apiKey, model) {
     try {
         socket.emit('log', { msg: '🚀 Iniciando agente...', type: 'info' });
         
-        // 1. CREACIÓN AUTOMÁTICA DEL ARCHIVO DE CONFIGURACIÓN
+        // Verificar estructura de directorios
         const enginePath = path.join(__dirname, 'openclaw-engine');
         const configPath = path.join(enginePath, 'openclaw.toml');
         
-        // Crear carpeta si no existe
+        // Verificar que el directorio exista
         if (!fs.existsSync(enginePath)) {
-            socket.emit('log', { msg: '⚠ Ruta del motor no encontrada, verificando estructura...', type: 'warning' });
+            socket.emit('log', { msg: '⚠ Ruta del motor no encontrada. Verificando estructura...', type: 'warning' });
             // Listar directorios para diagnóstico
             const dirs = fs.readdirSync(__dirname);
             socket.emit('log', { msg: `📂 Directorios disponibles: ${dirs.join(', ')}`, type: 'info' });
+            
+            return socket.emit('log', { msg: '❌ No se encontró el directorio openclaw-engine.', type: 'error' });
         }
         
+        // Crear archivo de configuración
         try {
-            // Configuración más completa con más opciones
+            // Configuración básica que sabemos que funciona
             const configContent = `
 [gateway]
 mode = "local"
 
 [llm]
 model = "${model || 'gemini-3-pro-preview'}"
-temperature = 0.7
-max_tokens = 4000
-
-[memory]
-type = "volatile"
-            `;
+`;
             
             fs.writeFileSync(configPath, configContent);
             socket.emit('log', { msg: '✅ Configuración creada exitosamente.', type: 'success' });
         } catch (err) {
             socket.emit('log', { msg: `❌ Error creando config: ${err.message}`, type: 'error' });
-            socket.emit('log', { msg: `📂 Ruta: ${configPath}`, type: 'info' });
+            return;
         }
 
-        // 2. Entorno con más variables
+        // Entorno con variables esenciales
         const env = Object.assign({}, process.env, {
             GOOGLE_API_KEY: apiKey,
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
             NODE_ENV: 'production',
-            NODE_OPTIONS: '--max-old-space-size=900',
-            DEBUG: 'openclaw:*' // Habilitar logs de debug
+            NODE_OPTIONS: '--max-old-space-size=900'
         });
 
-        // 3. EJECUCIÓN CON BANDERAS DE SEGURIDAD
+        // Intentar primero sin argumentos (modo más compatible)
         const cmd = 'node';
-        // Intentar con una combinación diferente de argumentos que funcione mejor
-        const args = ['openclaw.mjs', '--verbose']; 
+        const args = ['openclaw.mjs'];
 
         ptyProcess = pty.spawn(cmd, args, {
             name: 'xterm-color',
@@ -120,14 +116,14 @@ type = "volatile"
         });
 
         socket.emit('status', 'running');
+        socket.emit('log', { msg: '▶️ Ejecutando: node openclaw.mjs', type: 'info' });
 
         ptyProcess.on('data', (data) => {
             socket.emit('terminal_data', data);
             
-            // Analizar salida para detectar errores comunes
-            if (data.includes('Error: Missing config')) {
-                socket.emit('log', { msg: '⚠ Error de configuración detectado, intentando solución alternativa...', type: 'warning' });
-                // Podríamos implementar una solución alternativa aquí
+            // Detectar errores comunes
+            if (data.includes('Missing config')) {
+                socket.emit('log', { msg: '⚠ Error de configuración detectado.', type: 'warning' });
             }
         });
 
@@ -135,23 +131,26 @@ type = "volatile"
             socket.emit('log', { msg: `⚠ Agente desconectado (Código: ${code}).`, type: 'warning' });
             socket.emit('status', 'stopped');
             
-            // Reintentar automáticamente si falló
+            // Reintentar con diferentes comandos si falló
             if (code !== 0 && restartAttempts < MAX_RESTART_ATTEMPTS) {
                 restartAttempts++;
                 socket.emit('log', { msg: `🔄 Reintentando (${restartAttempts}/${MAX_RESTART_ATTEMPTS})...`, type: 'info' });
                 
-                // Intentar con diferentes argumentos en cada reintento
+                // Opciones de comando simplificadas que sabemos que existen
                 setTimeout(() => {
                     if (restartAttempts === 1) {
-                        startAgentWithArgs(socket, apiKey, model, ['openclaw.mjs', '--verbose', '--allow-unconfigured']);
+                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs', 'gateway']);
                     } else if (restartAttempts === 2) {
-                        startAgentWithArgs(socket, apiKey, model, ['openclaw.mjs', 'gateway']);
+                        // Probar con el asistente de configuración interactivo
+                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs', 'config', 'init']);
                     } else {
-                        startAgentWithArgs(socket, apiKey, model, ['openclaw.mjs']);
+                        // Último intento: solo el archivo
+                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs']);
                     }
                 }, 3000);
             } else if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
-                socket.emit('log', { msg: '❌ Demasiados intentos fallidos. Revisa los logs para más información.', type: 'error' });
+                socket.emit('log', { msg: '❌ Demasiados intentos fallidos.', type: 'error' });
+                socket.emit('log', { msg: 'ℹ️ Sugerencia: Intenta ejecutar Railway en modo Development para ver más detalles.', type: 'info' });
             }
             
             ptyProcess = null;
@@ -162,7 +161,7 @@ type = "volatile"
     }
 }
 
-function startAgentWithArgs(socket, apiKey, model, args) {
+function startAgentWithCommand(socket, apiKey, model, args) {
     try {
         const enginePath = path.join(__dirname, 'openclaw-engine');
         
@@ -172,11 +171,10 @@ function startAgentWithArgs(socket, apiKey, model, args) {
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
             NODE_ENV: 'production',
-            NODE_OPTIONS: '--max-old-space-size=900',
-            DEBUG: 'openclaw:*'
+            NODE_OPTIONS: '--max-old-space-size=900'
         });
 
-        socket.emit('log', { msg: `🔄 Intentando con: node ${args.join(' ')}`, type: 'info' });
+        socket.emit('log', { msg: `▶️ Ejecutando: node ${args.join(' ')}`, type: 'info' });
         
         ptyProcess = pty.spawn('node', args, {
             name: 'xterm-color',
@@ -193,7 +191,7 @@ function startAgentWithArgs(socket, apiKey, model, args) {
         });
 
         ptyProcess.on('exit', (code) => {
-            socket.emit('log', { msg: `⚠ Agente desconectado en reintento (Código: ${code}).`, type: 'warning' });
+            socket.emit('log', { msg: `⚠ Intento fallido (Código: ${code}).`, type: 'warning' });
             socket.emit('status', 'stopped');
             ptyProcess = null;
         });
