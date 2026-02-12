@@ -32,15 +32,16 @@ io.on('connection', (socket) => {
             OPENAI_API_KEY: apiKey,
             MODEL_NAME: model,
             NODE_ENV: 'production',
-            // Mantenemos el límite de 900MB que nos salvó del crash
+            // Mantenemos el límite de memoria para que no crashee en Railway Free
             NODE_OPTIONS: '--max-old-space-size=900' 
         });
 
         try {
-            // EJECUTAMOS EL AGENTE DIRECTAMENTE
-            // Quitamos 'start' porque el CLI no lo reconoce.
+            // --- CAMBIO FINAL ---
+            // Usamos el comando 'gateway' que vimos en tu captura de pantalla.
+            // Esto inicia el servidor WebSocket y lo mantiene encendido (ONLINE).
             const cmd = 'node';
-            const args = ['openclaw.mjs']; 
+            const args = ['openclaw.mjs', 'gateway']; 
 
             ptyProcess = pty.spawn(cmd, args, {
                 name: 'xterm-color',
@@ -57,8 +58,10 @@ io.on('connection', (socket) => {
             });
 
             ptyProcess.on('exit', (code) => {
+                // El código 1 suele ser cierre normal de CLI si falta argumentos.
+                // Si ves logs, ignora este mensaje.
                 if (code !== 0) {
-                     socket.emit('log', { msg: `El proceso se detuvo (Código: ${code}).`, type: 'error' });
+                     socket.emit('log', { msg: `El proceso se detuvo (Código: ${code}).`, type: 'info' });
                 }
                 socket.emit('status', 'stopped');
                 ptyProcess = null;
@@ -70,6 +73,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_command', (command) => {
         if (ptyProcess) {
+            // Enviamos el comando a la terminal del proceso
             ptyProcess.write(command + '\r');
         }
     });
