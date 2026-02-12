@@ -26,23 +26,26 @@ io.on('connection', (socket) => {
 
         const { apiKey, model } = config;
 
-        // Configuración de variables de entorno
         const env = Object.assign({}, process.env, {
-            // Claves de API
             GOOGLE_API_KEY: apiKey,
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
-            // Modelo
             MODEL_NAME: model,
-            // --- FIX CRÍTICO DE MEMORIA ---
-            // Le decimos a Node que puede usar hasta 4GB de RAM (4096 MB)
-            // Esto evita el error "Heap out of memory"
-            NODE_OPTIONS: '--max-old-space-size=4096' 
+            // 1. FORZAMOS MODO PRODUCCIÓN (Evita herramientas de desarrollo pesadas)
+            NODE_ENV: 'production',
+            // 2. LIMITE DE SEGURIDAD: 900MB (Deja 100MB para el sistema)
+            NODE_OPTIONS: '--max-old-space-size=900' 
         });
 
         try {
-            // Ejecutar OpenClaw usando pnpm start
-            ptyProcess = pty.spawn('pnpm', ['start'], {
+            // --- CAMBIO CLAVE ---
+            // En vez de 'pnpm start' (que recompila todo y gasta mucha RAM),
+            // ejecutamos directamente el archivo principal ya compilado.
+            // Esto ahorra cientos de megas de memoria.
+            const cmd = 'node';
+            const args = ['openclaw.mjs', 'start']; 
+
+            ptyProcess = pty.spawn(cmd, args, {
                 name: 'xterm-color',
                 cols: 80,
                 rows: 30,
@@ -57,9 +60,8 @@ io.on('connection', (socket) => {
             });
 
             ptyProcess.on('exit', (code) => {
-                // Si el código es 134 o 1, suele ser error de memoria o script fallido
                 if (code !== 0) {
-                     socket.emit('log', { msg: `El proceso se cerró inesperadamente (Código: ${code}). Intenta reiniciar.`, type: 'error' });
+                     socket.emit('log', { msg: `El proceso se detuvo (Código: ${code}).`, type: 'error' });
                 }
                 socket.emit('status', 'stopped');
                 ptyProcess = null;
