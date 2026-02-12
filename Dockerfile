@@ -2,10 +2,11 @@ FROM node:22-slim
 
 WORKDIR /app
 
-# Instalar dependencias
+# Instalar dependencias incluyendo git
 RUN apt-get update && apt-get install -y \
     python3 \
     build-essential \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copiar archivos del proyecto

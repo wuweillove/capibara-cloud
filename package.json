@@ -2,16 +2,11 @@
   "name": "capibara-cloud",
   "version": "1.0.0",
   "description": "Interfaz web para OpenClaw",
-  "main": "server.js",
-  "engines": {
-    "node": "22.x"
-  },
+  "main": "railway.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node railway.js"
   },
   "dependencies": {
-    "express": "4.18.2",
-    "socket.io": "4.7.2", 
-    "node-pty": "0.10.1"
+    "express": "4.18.2"
   }
 }
