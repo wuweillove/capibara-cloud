@@ -1,0 +1,15 @@
+version: '3'
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+    volumes:
+      - openclaw-data:/root/.openclaw
+    restart: always
+    mem_limit: 2G
+
+volumes:
+  openclaw-data:

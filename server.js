@@ -18,7 +18,7 @@ app.use(express.json());
 let ptyProcess = null;
 
 // Configuración básica
-const openclawDir = '/tmp/.openclaw';
+const openclawDir = '/root/.openclaw';
 const configPath = path.join(openclawDir, 'openclaw.json');
 
 // Funciones principales
@@ -88,17 +88,13 @@ function startOpenClaw(socket, apiKey, model) {
             OPENAI_API_KEY: apiKey,
             OPENCLAWCONFIGPATH: configPath,
             OPENCLAWSTATEDIR: openclawDir,
-            OPENCLAWGATEWAYPORT: "18789",
-            NODE_OPTIONS: '--max-old-space-size=460' // Limitar memoria Node
+            OPENCLAWGATEWAYPORT: "18789"
         };
-        
-        // Ruta a OpenClaw en node_modules
-        const openclawBin = './node_modules/.bin/openclaw';
         
         socket.emit('log', { msg: 'Iniciando OpenClaw...', type: 'info' });
         
-        // Ejecutar gateway con memoria limitada
-        ptyProcess = pty.spawn(openclawBin, ['gateway', '--port', '18789'], {
+        // Usar OpenClaw global
+        ptyProcess = pty.spawn('openclaw', ['gateway', '--port', '18789'], {
             name: 'xterm-color',
             cols: 80,
             rows: 24,
