@@ -10,54 +10,63 @@ const io = new Server(server);
 
 const PORT = process.env.PORT || 3000;
 
-// Servir la interfaz web
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
-// Variables globales
 let ptyProcess = null;
 
 io.on('connection', (socket) => {
-    console.log('Usuario conectado a la interfaz web');
+    console.log('Usuario conectado');
 
     socket.on('start_agent', (config) => {
         if (ptyProcess) {
-            socket.emit('log', { msg: '⚠ El agente ya está corriendo. Detenlo primero.', type: 'warning' });
+            socket.emit('log', { msg: '⚠ El agente ya está corriendo.', type: 'warning' });
             return;
         }
 
         const { apiKey, model } = config;
 
-        // Entorno seguro para el proceso
+        // Configuración de variables de entorno
         const env = Object.assign({}, process.env, {
+            // Claves de API
+            GOOGLE_API_KEY: apiKey,
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
-            MODEL_NAME: model || 'claude-3-5-sonnet'
+            // Modelo
+            MODEL_NAME: model,
+            // --- FIX CRÍTICO DE MEMORIA ---
+            // Le decimos a Node que puede usar hasta 4GB de RAM (4096 MB)
+            // Esto evita el error "Heap out of memory"
+            NODE_OPTIONS: '--max-old-space-size=4096' 
         });
 
-        // Ejecutar OpenClaw dentro del contenedor
-        // Asumimos que el comando de arranque es 'npm start' dentro de la carpeta clonada
-        ptyProcess = pty.spawn('npm', ['start'], {
-            name: 'xterm-color',
-            cols: 80,
-            rows: 30,
-            cwd: path.join(__dirname, 'openclaw-engine'),
-            env: env
-        });
+        try {
+            // Ejecutar OpenClaw usando pnpm start
+            ptyProcess = pty.spawn('pnpm', ['start'], {
+                name: 'xterm-color',
+                cols: 80,
+                rows: 30,
+                cwd: path.join(__dirname, 'openclaw-engine'),
+                env: env
+            });
 
-        socket.emit('status', 'running');
+            socket.emit('status', 'running');
 
-        // Escuchar lo que dice el agente
-        ptyProcess.on('data', (data) => {
-            // Convertimos colores ANSI a HTML simple o texto crudo si es necesario
-            socket.emit('terminal_data', data);
-        });
+            ptyProcess.on('data', (data) => {
+                socket.emit('terminal_data', data);
+            });
 
-        ptyProcess.on('exit', (code) => {
-            socket.emit('log', { msg: `El agente se detuvo (Código: ${code})`, type: 'error' });
-            socket.emit('status', 'stopped');
-            ptyProcess = null;
-        });
+            ptyProcess.on('exit', (code) => {
+                // Si el código es 134 o 1, suele ser error de memoria o script fallido
+                if (code !== 0) {
+                     socket.emit('log', { msg: `El proceso se cerró inesperadamente (Código: ${code}). Intenta reiniciar.`, type: 'error' });
+                }
+                socket.emit('status', 'stopped');
+                ptyProcess = null;
+            });
+        } catch (e) {
+            socket.emit('log', { msg: `Error al iniciar: ${e.message}`, type: 'error' });
+        }
     });
 
     socket.on('send_command', (command) => {
@@ -71,11 +80,10 @@ io.on('connection', (socket) => {
             ptyProcess.kill();
             ptyProcess = null;
             socket.emit('status', 'stopped');
-            socket.emit('log', { msg: 'Agente detenido manualmente.', type: 'success' });
         }
     });
 });
 
 server.listen(PORT, () => {
-    console.log(`☁ Servidor Cloud corriendo en puerto ${PORT}`);
+    console.log(`☁ Servidor listo en puerto ${PORT}`);
 });
