@@ -4,6 +4,8 @@ const { Server } = require('socket.io');
 const path = require('path');
 const pty = require('node-pty');
 const fs = require('fs');
+const os = require('os');
+const { execSync } = require('child_process');
 
 const app = express();
 const server = http.createServer(app);
@@ -17,6 +19,10 @@ app.use(express.json());
 let ptyProcess = null;
 let restartAttempts = 0;
 const MAX_RESTART_ATTEMPTS = 3;
+
+// Directorio OpenClaw correcto según la documentación
+const openclawDir = path.join(os.homedir(), '.openclaw');
+const configPath = path.join(openclawDir, 'openclaw.json');
 
 io.on('connection', (socket) => {
     console.log('Usuario conectado');
@@ -37,7 +43,7 @@ io.on('connection', (socket) => {
         const { apiKey, model } = config;
         restartAttempts = 0;
         
-        startAgent(socket, apiKey, model);
+        setupAndStartOpenClaw(socket, apiKey, model);
     });
 
     socket.on('send_command', (command) => {
@@ -58,145 +64,249 @@ io.on('connection', (socket) => {
     });
 });
 
-function startAgent(socket, apiKey, model) {
+// Configurar y arrancar OpenClaw según la documentación oficial
+function setupAndStartOpenClaw(socket, apiKey, model) {
     try {
-        socket.emit('log', { msg: '🚀 Iniciando agente...', type: 'info' });
+        socket.emit('log', { msg: '🚀 Preparando entorno de OpenClaw...', type: 'info' });
         
-        // Verificar estructura de directorios
-        const enginePath = path.join(__dirname, 'openclaw-engine');
-        const configPath = path.join(enginePath, 'openclaw.toml');
-        
-        // Verificar que el directorio exista
-        if (!fs.existsSync(enginePath)) {
-            socket.emit('log', { msg: '⚠ Ruta del motor no encontrada. Verificando estructura...', type: 'warning' });
-            // Listar directorios para diagnóstico
-            const dirs = fs.readdirSync(__dirname);
-            socket.emit('log', { msg: `📂 Directorios disponibles: ${dirs.join(', ')}`, type: 'info' });
-            
-            return socket.emit('log', { msg: '❌ No se encontró el directorio openclaw-engine.', type: 'error' });
+        // 1. Asegurarse de que exista el directorio .openclaw
+        if (!fs.existsSync(openclawDir)) {
+            socket.emit('log', { msg: '📂 Creando directorio OpenClaw...', type: 'info' });
+            fs.mkdirSync(openclawDir, { recursive: true });
+            fs.mkdirSync(path.join(openclawDir, 'workspace'), { recursive: true });
+            fs.mkdirSync(path.join(openclawDir, 'credentials'), { recursive: true });
         }
         
-        // Crear archivo de configuración
-        try {
-            // Configuración básica que sabemos que funciona
-            const configContent = `
-[gateway]
-mode = "local"
-
-[llm]
-model = "${model || 'gemini-3-pro-preview'}"
-`;
-            
-            fs.writeFileSync(configPath, configContent);
-            socket.emit('log', { msg: '✅ Configuración creada exitosamente.', type: 'success' });
-        } catch (err) {
-            socket.emit('log', { msg: `❌ Error creando config: ${err.message}`, type: 'error' });
-            return;
-        }
-
-        // Entorno con variables esenciales
+        // 2. Crear configuración JSON correcta
+        const configContent = {
+            agents: { 
+                defaults: { 
+                    workspace: path.join(openclawDir, 'workspace') 
+                }
+            },
+            gateway: { 
+                port: 18789,
+                host: "0.0.0.0",
+                auth: {
+                    token: apiKey.substring(0, 16) // Usar parte de la API key como token
+                }
+            },
+            llms: {
+                providers: {
+                    openai: { apiKey: apiKey },
+                    anthropic: { apiKey: apiKey },
+                    google: { apiKey: apiKey }
+                },
+                defaults: {
+                    provider: "google",
+                    model: model || "gemini-1.5-pro"
+                }
+            }
+        };
+        
+        fs.writeFileSync(configPath, JSON.stringify(configContent, null, 2));
+        socket.emit('log', { msg: '✅ Configuración creada correctamente.', type: 'success' });
+        
+        // 3. Configurar variables de entorno
         const env = Object.assign({}, process.env, {
-            GOOGLE_API_KEY: apiKey,
-            ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
+            ANTHROPIC_API_KEY: apiKey,
+            GOOGLE_API_KEY: apiKey,
+            OPENCLAWCONFIGPATH: configPath,
+            OPENCLAWSTATEDIR: openclawDir,
+            OPENCLAWGATEWAYPORT: "18789",
             NODE_ENV: 'production',
             NODE_OPTIONS: '--max-old-space-size=900'
         });
-
-        // Intentar primero sin argumentos (modo más compatible)
-        const cmd = 'node';
-        const args = ['openclaw.mjs'];
-
-        ptyProcess = pty.spawn(cmd, args, {
+        
+        // 4. Instalación global de OpenClaw si no existe
+        try {
+            const npmGlobalPath = execSync('npm root -g').toString().trim();
+            const openClawInstalled = fs.existsSync(path.join(npmGlobalPath, 'openclaw'));
+            
+            if (!openClawInstalled) {
+                socket.emit('log', { msg: '📦 OpenClaw no encontrado. Instalando globalmente...', type: 'info' });
+                execSync('npm install -g openclaw@latest', { stdio: 'inherit' });
+                socket.emit('log', { msg: '✅ OpenClaw instalado exitosamente.', type: 'success' });
+            }
+        } catch (err) {
+            socket.emit('log', { msg: `⚠ Verificación de instalación: ${err.message}. Continuando...`, type: 'warning' });
+        }
+        
+        // 5. Iniciar OpenClaw correctamente usando el comando gateway
+        socket.emit('log', { msg: '🔌 Iniciando gateway de OpenClaw...', type: 'info' });
+        
+        // El comando correcto según la documentación
+        let openclawCommand = 'openclaw';
+        let openclawArgs = ['gateway', '--port', '18789'];
+        
+        // Verificar si OpenClaw está en el PATH
+        try {
+            execSync('which openclaw', { stdio: 'ignore' });
+        } catch (err) {
+            // Si no está en el PATH, usar la ruta completa desde node_modules
+            socket.emit('log', { msg: '⚠ OpenClaw no encontrado en PATH, buscando en node_modules...', type: 'warning' });
+            try {
+                openclawCommand = path.join(__dirname, 'node_modules', '.bin', 'openclaw');
+                if (!fs.existsSync(openclawCommand)) {
+                    // Última opción: instalarlo localmente
+                    socket.emit('log', { msg: '📦 Instalando OpenClaw localmente...', type: 'info' });
+                    execSync('npm install openclaw@latest', { stdio: 'inherit' });
+                }
+            } catch (err) {
+                socket.emit('log', { msg: `❌ Error encontrando OpenClaw: ${err.message}`, type: 'error' });
+                return;
+            }
+        }
+        
+        socket.emit('log', { msg: `▶️ Ejecutando: ${openclawCommand} ${openclawArgs.join(' ')}`, type: 'info' });
+        
+        ptyProcess = pty.spawn(openclawCommand, openclawArgs, {
             name: 'xterm-color',
             cols: 80,
             rows: 30,
-            cwd: enginePath,
             env: env
         });
-
+        
         socket.emit('status', 'running');
-        socket.emit('log', { msg: '▶️ Ejecutando: node openclaw.mjs', type: 'info' });
-
+        
         ptyProcess.on('data', (data) => {
             socket.emit('terminal_data', data);
             
-            // Detectar errores comunes
-            if (data.includes('Missing config')) {
-                socket.emit('log', { msg: '⚠ Error de configuración detectado.', type: 'warning' });
+            // Detectar mensajes importantes
+            if (data.includes('Server listening')) {
+                socket.emit('log', { msg: '✅ Gateway iniciado exitosamente.', type: 'success' });
             }
         });
-
+        
         ptyProcess.on('exit', (code) => {
             socket.emit('log', { msg: `⚠ Agente desconectado (Código: ${code}).`, type: 'warning' });
             socket.emit('status', 'stopped');
             
-            // Reintentar con diferentes comandos si falló
+            // Reintentar con diferentes opciones si falló
             if (code !== 0 && restartAttempts < MAX_RESTART_ATTEMPTS) {
                 restartAttempts++;
                 socket.emit('log', { msg: `🔄 Reintentando (${restartAttempts}/${MAX_RESTART_ATTEMPTS})...`, type: 'info' });
                 
-                // Opciones de comando simplificadas que sabemos que existen
                 setTimeout(() => {
                     if (restartAttempts === 1) {
-                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs', 'gateway']);
+                        // Intento con diagnóstico
+                        runDiagnostics(socket, apiKey, model);
                     } else if (restartAttempts === 2) {
-                        // Probar con el asistente de configuración interactivo
-                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs', 'config', 'init']);
+                        // Intento con reinstalación
+                        reinstallAndStart(socket, apiKey, model);
                     } else {
-                        // Último intento: solo el archivo
-                        startAgentWithCommand(socket, apiKey, model, ['openclaw.mjs']);
+                        // Último intento: modo forzado
+                        startWithForceOption(socket, apiKey, model);
                     }
                 }, 3000);
             } else if (restartAttempts >= MAX_RESTART_ATTEMPTS) {
                 socket.emit('log', { msg: '❌ Demasiados intentos fallidos.', type: 'error' });
-                socket.emit('log', { msg: 'ℹ️ Sugerencia: Intenta ejecutar Railway en modo Development para ver más detalles.', type: 'info' });
+                socket.emit('log', { msg: 'ℹ️ Ejecuta "openclaw doctor" manualmente para diagnosticar.', type: 'info' });
             }
             
             ptyProcess = null;
         });
     } catch (e) {
-        socket.emit('log', { msg: `❌ Error al iniciar: ${e.message}`, type: 'error' });
+        socket.emit('log', { msg: `❌ Error de configuración: ${e.message}`, type: 'error' });
         socket.emit('status', 'stopped');
     }
 }
 
-function startAgentWithCommand(socket, apiKey, model, args) {
+// Ejecutar diagnósticos con openclaw doctor
+function runDiagnostics(socket, apiKey, model) {
     try {
-        const enginePath = path.join(__dirname, 'openclaw-engine');
+        socket.emit('log', { msg: '🔍 Ejecutando diagnóstico...', type: 'info' });
         
-        // Entorno
-        const env = Object.assign({}, process.env, {
-            GOOGLE_API_KEY: apiKey,
-            ANTHROPIC_API_KEY: apiKey,
+        const env = {
+            ...process.env,
             OPENAI_API_KEY: apiKey,
-            NODE_ENV: 'production',
-            NODE_OPTIONS: '--max-old-space-size=900'
-        });
-
-        socket.emit('log', { msg: `▶️ Ejecutando: node ${args.join(' ')}`, type: 'info' });
+            ANTHROPIC_API_KEY: apiKey,
+            GOOGLE_API_KEY: apiKey,
+            OPENCLAWCONFIGPATH: configPath,
+            OPENCLAWSTATEDIR: openclawDir
+        };
         
-        ptyProcess = pty.spawn('node', args, {
+        ptyProcess = pty.spawn('openclaw', ['doctor'], {
             name: 'xterm-color',
-            cols: 80,
+            cols: 80, 
             rows: 30,
-            cwd: enginePath,
             env: env
         });
-
+        
         socket.emit('status', 'running');
-
+        
         ptyProcess.on('data', (data) => {
             socket.emit('terminal_data', data);
         });
-
+        
         ptyProcess.on('exit', (code) => {
-            socket.emit('log', { msg: `⚠ Intento fallido (Código: ${code}).`, type: 'warning' });
+            socket.emit('log', { msg: `🔍 Diagnóstico completado (Código: ${code}).`, type: 'info' });
             socket.emit('status', 'stopped');
             ptyProcess = null;
         });
     } catch (e) {
-        socket.emit('log', { msg: `❌ Error en reintento: ${e.message}`, type: 'error' });
+        socket.emit('log', { msg: `❌ Error en diagnóstico: ${e.message}`, type: 'error' });
+        socket.emit('status', 'stopped');
+    }
+}
+
+// Reinstalar OpenClaw y reiniciar
+function reinstallAndStart(socket, apiKey, model) {
+    try {
+        socket.emit('log', { msg: '🔄 Reinstalando OpenClaw...', type: 'info' });
+        
+        execSync('npm uninstall -g openclaw && npm install -g openclaw@latest', { stdio: 'inherit' });
+        socket.emit('log', { msg: '✅ Reinstalación completada.', type: 'success' });
+        
+        // Reiniciar con configuración limpia
+        if (fs.existsSync(configPath)) {
+            fs.unlinkSync(configPath);
+        }
+        
+        setupAndStartOpenClaw(socket, apiKey, model);
+    } catch (e) {
+        socket.emit('log', { msg: `❌ Error en reinstalación: ${e.message}`, type: 'error' });
+        socket.emit('status', 'stopped');
+    }
+}
+
+// Iniciar con opción --force
+function startWithForceOption(socket, apiKey, model) {
+    try {
+        socket.emit('log', { msg: '💪 Iniciando con opción --force...', type: 'info' });
+        
+        const env = {
+            ...process.env,
+            OPENAI_API_KEY: apiKey,
+            ANTHROPIC_API_KEY: apiKey,
+            GOOGLE_API_KEY: apiKey,
+            OPENCLAWCONFIGPATH: configPath,
+            OPENCLAWSTATEDIR: openclawDir,
+            OPENCLAWGATEWAYPORT: "18789",
+            NODE_ENV: 'production'
+        };
+        
+        ptyProcess = pty.spawn('openclaw', ['gateway', '--port', '18789', '--force'], {
+            name: 'xterm-color',
+            cols: 80,
+            rows: 30,
+            env: env
+        });
+        
+        socket.emit('status', 'running');
+        
+        ptyProcess.on('data', (data) => {
+            socket.emit('terminal_data', data);
+        });
+        
+        ptyProcess.on('exit', (code) => {
+            socket.emit('log', { msg: `⚠ Gateway forzado desconectado (Código: ${code}).`, type: 'warning' });
+            socket.emit('status', 'stopped');
+            ptyProcess = null;
+        });
+    } catch (e) {
+        socket.emit('log', { msg: `❌ Error en inicio forzado: ${e.message}`, type: 'error' });
         socket.emit('status', 'stopped');
     }
 }
