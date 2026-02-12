@@ -31,19 +31,16 @@ io.on('connection', (socket) => {
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
             MODEL_NAME: model,
-            // 1. FORZAMOS MODO PRODUCCIÓN (Evita herramientas de desarrollo pesadas)
             NODE_ENV: 'production',
-            // 2. LIMITE DE SEGURIDAD: 900MB (Deja 100MB para el sistema)
+            // Mantenemos el límite de 900MB que nos salvó del crash
             NODE_OPTIONS: '--max-old-space-size=900' 
         });
 
         try {
-            // --- CAMBIO CLAVE ---
-            // En vez de 'pnpm start' (que recompila todo y gasta mucha RAM),
-            // ejecutamos directamente el archivo principal ya compilado.
-            // Esto ahorra cientos de megas de memoria.
+            // EJECUTAMOS EL AGENTE DIRECTAMENTE
+            // Quitamos 'start' porque el CLI no lo reconoce.
             const cmd = 'node';
-            const args = ['openclaw.mjs', 'start']; 
+            const args = ['openclaw.mjs']; 
 
             ptyProcess = pty.spawn(cmd, args, {
                 name: 'xterm-color',
