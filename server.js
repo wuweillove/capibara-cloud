@@ -26,22 +26,26 @@ io.on('connection', (socket) => {
 
         const { apiKey, model } = config;
 
+        // Configuramos el entorno
         const env = Object.assign({}, process.env, {
+            // Pasamos la API Key a todos los posibles proveedores
             GOOGLE_API_KEY: apiKey,
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
+            // Nombre del modelo
             MODEL_NAME: model,
+            // Variables de optimización para Railway
             NODE_ENV: 'production',
-            // Mantenemos el límite de memoria para que no crashee en Railway Free
-            NODE_OPTIONS: '--max-old-space-size=900' 
+            NODE_OPTIONS: '--max-old-space-size=900'
         });
 
         try {
-            // --- CAMBIO FINAL ---
-            // Usamos el comando 'gateway' que vimos en tu captura de pantalla.
-            // Esto inicia el servidor WebSocket y lo mantiene encendido (ONLINE).
+            // --- CAMBIO DEFINITIVO PARA CHATEAR ---
+            // 1. Quitamos 'gateway'. Al no poner comando, arranca el modo "Chat/Principal".
+            // 2. Mantenemos '--allow-unconfigured' para que no pida el archivo toml.
+            // 3. Añadimos '--interactive' por si acaso el agente lo requiere explícitamente.
             const cmd = 'node';
-            const args = ['openclaw.mjs', 'gateway']; 
+            const args = ['openclaw.mjs', '--allow-unconfigured', '--interactive']; 
 
             ptyProcess = pty.spawn(cmd, args, {
                 name: 'xterm-color',
@@ -58,10 +62,9 @@ io.on('connection', (socket) => {
             });
 
             ptyProcess.on('exit', (code) => {
-                // El código 1 suele ser cierre normal de CLI si falta argumentos.
-                // Si ves logs, ignora este mensaje.
+                // Si se cierra, avisamos.
                 if (code !== 0) {
-                     socket.emit('log', { msg: `El proceso se detuvo (Código: ${code}).`, type: 'info' });
+                     socket.emit('log', { msg: `El agente se desconectó (Código: ${code}).`, type: 'info' });
                 }
                 socket.emit('status', 'stopped');
                 ptyProcess = null;
@@ -73,7 +76,7 @@ io.on('connection', (socket) => {
 
     socket.on('send_command', (command) => {
         if (ptyProcess) {
-            // Enviamos el comando a la terminal del proceso
+            // Enviamos lo que escribes al agente
             ptyProcess.write(command + '\r');
         }
     });
