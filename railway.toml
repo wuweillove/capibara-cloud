@@ -1,0 +1,19 @@
+[build]
+builder = "nixpacks"
+nixpacksVersion = "1.19.0"
+
+[deploy]
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+[phases.setup]
+nixPkgs = ["nodejs@22"]
+
+[phases.install]
+cmds = ["npm install --no-audit --no-fund --production"]
+
+[phases.build]
+cmds = ["npm prune --production"]
+
+[start]
+cmd = "npm start"
