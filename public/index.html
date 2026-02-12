@@ -2,104 +2,160 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Capibara Cloud - Agente Autónomo</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Capibara Cloud Universal</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/socket.io/socket.io.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
     <script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        /* Prevenir zoom en inputs en iOS */
+        input, select, textarea { font-size: 16px !important; }
+        .xterm-viewport { overflow-y: auto !important; }
+    </style>
 </head>
-<body class="bg-gray-900 h-screen flex flex-col text-white overflow-hidden">
+<body class="bg-black h-[100dvh] w-screen flex flex-col md:flex-row text-white overflow-hidden">
 
-    <nav class="h-16 bg-gray-800 border-b border-gray-700 flex items-center justify-between px-6">
-        <div class="flex items-center gap-3">
-            <i class="fas fa-robot text-orange-500 text-2xl"></i>
-            <h1 class="text-xl font-bold tracking-wide">Capibara<span class="text-orange-500">Cloud</span></h1>
-        </div>
-        <div class="flex items-center gap-4">
-            <span id="statusIndicator" class="flex items-center gap-2 text-xs text-gray-400 uppercase font-bold">
-                <span class="w-2 h-2 rounded-full bg-red-500"></span> Desconectado
-            </span>
-        </div>
-    </nav>
+    <div id="mobileOverlay" onclick="toggleMenu()" class="fixed inset-0 bg-black/80 z-30 hidden md:hidden backdrop-blur-sm"></div>
 
-    <div class="flex flex-1 overflow-hidden">
-        <aside class="w-80 bg-gray-900 border-r border-gray-700 p-6 flex flex-col gap-6 overflow-y-auto">
+    <header class="flex md:hidden items-center justify-between p-4 bg-gray-900 border-b border-gray-800 shrink-0 z-20">
+        <div class="flex items-center gap-2">
+            <i class="fas fa-robot text-orange-500"></i>
+            <span class="font-bold">Capibara</span>
+        </div>
+        <button onclick="toggleMenu()" class="text-gray-300 hover:text-white p-2">
+            <i class="fas fa-bars text-xl"></i>
+        </button>
+    </header>
+
+    <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 w-72 bg-gray-900 border-r border-gray-800 transform -translate-x-full transition-transform duration-300 ease-in-out md:relative md:translate-x-0 md:flex md:flex-col shadow-2xl md:shadow-none">
+        
+        <div class="hidden md:flex items-center gap-3 p-6 border-b border-gray-800">
+            <div class="w-8 h-8 bg-orange-500 rounded flex items-center justify-center">
+                <i class="fas fa-otter text-white"></i>
+            </div>
+            <h1 class="font-bold text-lg">Capibara<span class="text-orange-500">Cloud</span></h1>
+        </div>
+
+        <div class="flex md:hidden items-center justify-between p-6 border-b border-gray-800">
+            <span class="font-bold text-lg">Configuración</span>
+            <button onclick="toggleMenu()" class="text-gray-400"><i class="fas fa-times"></i></button>
+        </div>
+
+        <div class="p-6 space-y-5 flex-1 overflow-y-auto">
             
-            <div class="bg-gray-800 p-4 rounded-xl border border-gray-700 shadow-lg">
-                <h3 class="text-sm font-semibold text-gray-300 mb-3"><i class="fas fa-key mr-2"></i>Configuración</h3>
-                
-                <label class="block text-xs text-gray-500 mb-1">API Key (Anthropic/OpenAI)</label>
-                <input type="password" id="apiKey" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white mb-4 focus:border-orange-500 outline-none" placeholder="sk-...">
-                
-                <label class="block text-xs text-gray-500 mb-1">Modelo</label>
-                <select id="model" class="w-full bg-gray-900 border border-gray-600 rounded p-2 text-sm text-white outline-none">
+            <div class="bg-gray-800 p-3 rounded-lg border border-gray-700">
+                <div class="text-xs text-gray-400 uppercase font-bold mb-1">Estado</div>
+                <div id="statusIndicator" class="flex items-center gap-2 text-sm font-semibold text-red-400">
+                    <span class="w-2 h-2 rounded-full bg-red-500"></span> Desconectado
+                </div>
+            </div>
+
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">API Key</label>
+                <input type="password" id="apiKey" class="w-full bg-black border border-gray-700 rounded p-2.5 text-sm focus:border-orange-500 outline-none" placeholder="sk-...">
+            </div>
+
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Modelo</label>
+                <select id="model" class="w-full bg-black border border-gray-700 rounded p-2.5 text-sm outline-none">
                     <option value="claude-3-5-sonnet-20240620">Claude 3.5 Sonnet</option>
                     <option value="gpt-4o">GPT-4o</option>
                 </select>
             </div>
-
-            <div class="space-y-3">
-                <button onclick="startAgent()" id="btnStart" class="w-full py-3 bg-green-600 hover:bg-green-500 rounded-lg font-bold transition shadow-lg shadow-green-900/50">
-                    <i class="fas fa-play mr-2"></i> INICIAR AGENTE
-                </button>
-                <button onclick="stopAgent()" id="btnStop" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-lg font-bold transition shadow-lg shadow-red-900/50 hidden">
-                    <i class="fas fa-square mr-2"></i> DETENER
-                </button>
-            </div>
-
-            <div class="mt-auto text-xs text-gray-600 text-center">
-                El código se ejecuta en un contenedor seguro en la nube.
-            </div>
-        </aside>
-
-        <main class="flex-1 bg-black p-2 relative flex flex-col">
-            <div id="terminal" class="flex-1 w-full h-full"></div>
             
-            <div class="h-16 bg-gray-800 border-t border-gray-700 p-3 flex gap-2">
-                <input type="text" id="cmdInput" class="flex-1 bg-gray-900 border border-gray-600 rounded px-4 text-white focus:outline-none focus:border-orange-500" placeholder="Escribe tu instrucción aquí..." onkeydown="handleEnter(event)">
-                <button onclick="sendCommand()" class="px-6 bg-orange-600 hover:bg-orange-500 rounded text-white font-bold transition">
-                    <i class="fas fa-paper-plane"></i>
+            <div class="pt-2">
+                <button onclick="startAgent()" id="btnStart" class="w-full py-3 bg-green-600 hover:bg-green-500 rounded-lg font-bold shadow-lg transition text-sm">
+                    INICIAR AGENTE
+                </button>
+                <button onclick="stopAgent()" id="btnStop" class="w-full py-3 bg-red-600 hover:bg-red-500 rounded-lg font-bold shadow-lg transition text-sm hidden">
+                    DETENER
                 </button>
             </div>
-        </main>
-    </div>
+        </div>
+        
+        <div class="p-4 text-xs text-center text-gray-600 border-t border-gray-800">
+            v1.2 Universal
+        </div>
+    </aside>
+
+    <main class="flex-1 flex flex-col min-w-0 bg-black relative z-10">
+        <div id="terminal-container" class="flex-1 p-2 overflow-hidden relative">
+            <div id="terminal" class="absolute inset-0"></div>
+        </div>
+
+        <div class="p-3 bg-gray-900 border-t border-gray-800 flex gap-2 shrink-0">
+            <input type="text" id="cmdInput" 
+                class="flex-1 bg-black border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-orange-500 outline-none transition" 
+                placeholder="Escribe una orden..." 
+                autocomplete="off"
+                onkeydown="handleEnter(event)">
+            <button onclick="sendCommand()" class="px-4 bg-orange-600 hover:bg-orange-500 rounded-lg text-white transition shadow-lg">
+                <i class="fas fa-paper-plane"></i>
+            </button>
+        </div>
+    </main>
 
     <script>
+        // --- Lógica de UI Responsiva ---
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('mobileOverlay');
+        let isMenuOpen = false;
+
+        function toggleMenu() {
+            isMenuOpen = !isMenuOpen;
+            if (isMenuOpen) {
+                sidebar.classList.remove('-translate-x-full');
+                overlay.classList.remove('hidden');
+            } else {
+                sidebar.classList.add('-translate-x-full');
+                overlay.classList.add('hidden');
+            }
+        }
+
+        // --- Lógica de Terminal ---
         const socket = io();
         const term = new Terminal({
             cursorBlink: true,
-            theme: {
-                background: '#000000',
-                foreground: '#00ff00',
-            },
-            fontFamily: 'Menlo, monospace',
-            fontSize: 14
+            theme: { background: '#000000', foreground: '#00ff00', selectionBackground: '#333' },
+            fontFamily: 'Menlo, Consolas, monospace',
+            fontSize: window.innerWidth < 768 ? 13 : 15, // Letra más pequeña en móvil
+            convertEol: true,
         });
+
         const fitAddon = new FitAddon.FitAddon();
         term.loadAddon(fitAddon);
         term.open(document.getElementById('terminal'));
-        fitAddon.fit();
 
-        window.addEventListener('resize', () => fitAddon.fit());
+        // Ajuste perfecto al redimensionar ventana
+        function fit() {
+            try { fitAddon.fit(); } catch (e) {}
+        }
+        
+        // Esperar a que el DOM pinte para ajustar
+        setTimeout(fit, 100);
+        window.addEventListener('resize', fit);
 
-        // Recepción de datos del backend
-        socket.on('terminal_data', (data) => {
-            term.write(data);
-        });
+        // --- Comunicación Socket.io ---
+        socket.on('terminal_data', (data) => term.write(data));
 
         socket.on('status', (status) => {
             const ind = document.getElementById('statusIndicator');
             const btnStart = document.getElementById('btnStart');
             const btnStop = document.getElementById('btnStop');
+            const isRunning = status === 'running';
 
-            if (status === 'running') {
+            if (isRunning) {
+                ind.className = 'flex items-center gap-2 text-sm font-semibold text-green-400';
                 ind.innerHTML = '<span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> ONLINE';
                 btnStart.classList.add('hidden');
                 btnStop.classList.remove('hidden');
+                // En móvil, cerramos menú al iniciar para ver la acción
+                if (window.innerWidth < 768 && isMenuOpen) toggleMenu();
             } else {
+                ind.className = 'flex items-center gap-2 text-sm font-semibold text-red-400';
                 ind.innerHTML = '<span class="w-2 h-2 rounded-full bg-red-500"></span> OFFLINE';
                 btnStart.classList.remove('hidden');
                 btnStop.classList.add('hidden');
@@ -107,20 +163,19 @@
         });
 
         socket.on('log', (data) => {
-            term.write(`\r\n\x1b[33m[SISTEMA]: ${data.msg}\x1b[0m\r\n`);
+            // Escribir logs del sistema en amarillo en la terminal
+            term.write(`\r\n\x1b[33m[SYSTEM]: ${data.msg}\x1b[0m\r\n`);
         });
 
+        // --- Funciones de Control ---
         function startAgent() {
             const apiKey = document.getElementById('apiKey').value;
             const model = document.getElementById('model').value;
             
-            if (!apiKey) {
-                alert("Necesitas una API Key para encender el cerebro del agente.");
-                return;
-            }
-
+            if (!apiKey) return alert("Por favor ingresa tu API Key.");
+            
             term.clear();
-            term.write('Inicializando entorno cloud...\r\n');
+            term.write('Iniciando entorno cloud...\r\n');
             socket.emit('start_agent', { apiKey, model });
         }
 
@@ -132,8 +187,12 @@
             const input = document.getElementById('cmdInput');
             const cmd = input.value;
             if (cmd) {
+                // Pequeño eco local para UX
+                term.write(`\r\n\x1b[1;34m> ${cmd}\x1b[0m\r\n`);
                 socket.emit('send_command', cmd);
                 input.value = '';
+                // Mantener foco en input si estamos en escritorio
+                if (window.innerWidth > 768) input.focus();
             }
         }
 
