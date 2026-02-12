@@ -3,6 +3,7 @@ const http = require('http');
 const { Server } = require('socket.io');
 const path = require('path');
 const pty = require('node-pty');
+const fs = require('fs'); // <--- NUEVO: Necesario para crear el archivo
 
 const app = express();
 const server = http.createServer(app);
@@ -26,32 +27,47 @@ io.on('connection', (socket) => {
 
         const { apiKey, model } = config;
 
-        // Configuramos el entorno
+        // 1. CREACIÓN AUTOMÁTICA DEL ARCHIVO DE CONFIGURACIÓN
+        // Esto soluciona el error "Missing config" permanentemente.
+        const enginePath = path.join(__dirname, 'openclaw-engine');
+        const configPath = path.join(enginePath, 'openclaw.toml');
+        
+        try {
+            // Escribimos una configuración mínima válida
+            const configContent = `
+[gateway]
+mode = "local"
+
+[llm]
+model = "${model || 'gemini-3-pro-preview'}"
+`;
+            fs.writeFileSync(configPath, configContent);
+            socket.emit('log', { msg: '✅ Configuración creada exitosamente.', type: 'success' });
+        } catch (err) {
+            socket.emit('log', { msg: 'Error creando config: ' + err.message, type: 'error' });
+        }
+
+        // 2. Entorno
         const env = Object.assign({}, process.env, {
-            // Pasamos la API Key a todos los posibles proveedores
             GOOGLE_API_KEY: apiKey,
             ANTHROPIC_API_KEY: apiKey,
             OPENAI_API_KEY: apiKey,
-            // Nombre del modelo
-            MODEL_NAME: model,
-            // Variables de optimización para Railway
             NODE_ENV: 'production',
-            NODE_OPTIONS: '--max-old-space-size=900'
+            NODE_OPTIONS: '--max-old-space-size=900' 
         });
 
         try {
-            // --- CAMBIO DEFINITIVO PARA CHATEAR ---
-            // 1. Quitamos 'gateway'. Al no poner comando, arranca el modo "Chat/Principal".
-            // 2. Mantenemos '--allow-unconfigured' para que no pida el archivo toml.
-            // 3. Añadimos '--interactive' por si acaso el agente lo requiere explícitamente.
+            // 3. EJECUCIÓN LIMPIA
+            // Ya no necesitamos banderas raras porque el archivo config ya existe.
+            // Al no poner argumentos, arranca el MODO CHAT por defecto.
             const cmd = 'node';
-            const args = ['openclaw.mjs', '--allow-unconfigured', '--interactive']; 
+            const args = ['openclaw.mjs']; 
 
             ptyProcess = pty.spawn(cmd, args, {
                 name: 'xterm-color',
                 cols: 80,
                 rows: 30,
-                cwd: path.join(__dirname, 'openclaw-engine'),
+                cwd: enginePath,
                 env: env
             });
 
@@ -62,9 +78,8 @@ io.on('connection', (socket) => {
             });
 
             ptyProcess.on('exit', (code) => {
-                // Si se cierra, avisamos.
                 if (code !== 0) {
-                     socket.emit('log', { msg: `El agente se desconectó (Código: ${code}).`, type: 'info' });
+                     socket.emit('log', { msg: `Agente desconectado (Código: ${code}).`, type: 'info' });
                 }
                 socket.emit('status', 'stopped');
                 ptyProcess = null;
@@ -76,7 +91,6 @@ io.on('connection', (socket) => {
 
     socket.on('send_command', (command) => {
         if (ptyProcess) {
-            // Enviamos lo que escribes al agente
             ptyProcess.write(command + '\r');
         }
     });
